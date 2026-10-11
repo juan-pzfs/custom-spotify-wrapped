@@ -3,8 +3,7 @@ from pathlib import Path
 import pandas as pd
 
 # 👇 To switch to your real data, change only this line
-DATA_FOLDER = Path("sample_dta/Spotify Extended Streaming History")
-# First days of history that don't count as "discoveries" (nothing to compare against yet)
+DATA_FOLDER = Path("sample_data/Spotify Extended Streaming History")# First days of history that don't count as "discoveries" (nothing to compare against yet)
 WARMUP_DAYS = 90
 
 
