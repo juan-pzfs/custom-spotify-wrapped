@@ -1,5 +1,6 @@
 from pathlib import Path
 import pandas as pd
+import json
 
 # 👇 Para cambiar a datos reales, solo cambia esta línea
 CARPETA = Path("sample_data/Spotify Extended Streaming History")
@@ -56,11 +57,31 @@ def artistas_nuevos(df, inicio, fin, minimo=10):
     # 4. Solo los que de verdad entraron a tu rotación
     return primeras[primeras["reproducciones"] >= minimo].sort_values("ts")
 
+def crear_resumen(df, inicio, fin, n=5):
+    """Arma el resumen (pequeño) que le mandaremos a Claude."""
+    periodo = filtrar_fechas(df, inicio, fin)
+    artistas = top_artistas(periodo, n)
+    canciones = top_canciones(periodo, n)
+
+    return {
+        "periodo": {"inicio": inicio, "fin": fin},
+        "historial_desde": df["ts"].min().strftime("%Y-%m-%d"),
+        "total_reproducciones": len(periodo),
+        "horas_totales": round(periodo["ms_played"].sum() / 3_600_000, 1),
+        "top_artistas": [
+            {"artista": artista, "horas": float(horas)}
+            for artista, horas in artistas.items()
+        ],
+        "top_canciones": [
+            {"artista": artista, "cancion": cancion, "reproducciones": int(veces)}
+            for (artista, cancion), veces in canciones.items()
+        ],
+    }
 
 if __name__ == "__main__":
     df = limpiar(cargar_historial(CARPETA))
-    for inicio, fin in [("2026-01-01", "2026-03-31"),
-                        ("2026-04-01", "2026-06-30"),
-                        ("2026-07-01", "2026-09-30")]:
-        print(f"--- Artistas nuevos {inicio} a {fin} ---")
-        print(artistas_nuevos(df, inicio, fin))
+
+    resumen = crear_resumen(df, "2026-01-01", "2026-09-30")
+    texto = json.dumps(resumen, indent=2, ensure_ascii=False)
+    print(texto)
+    print("Caracteres del resumen:", len(texto))
