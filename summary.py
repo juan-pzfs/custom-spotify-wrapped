@@ -1,10 +1,19 @@
+import os
 import json
 from pathlib import Path
 import pandas as pd
+from dotenv import load_dotenv
 
-# 👇 To switch to your real data, change only this line
-DATA_FOLDER = Path("sample_data/Spotify Extended Streaming History")# First days of history that don't count as "discoveries" (nothing to compare against yet)
-WARMUP_DAYS = 90
+load_dotenv()
+
+# Data folder: set SPOTIFY_DATA_FOLDER in .env to use your real data;
+# otherwise it uses the public sample data
+DATA_FOLDER = Path(os.getenv("SPOTIFY_DATA_FOLDER", "sample_data/Spotify Extended Streaming History"))
+
+WARMUP_DAYS = 90       # first days of history that don't count as "discoveries"
+MAX_NEW_ARTISTS = 10   # how many new artists to send to Claude (the most played)
+TOP_ARTISTS = 10       # how many artists in the top list
+TOP_TRACKS = 5         # how many tracks in the top list
 
 
 def load_history(folder):
@@ -68,30 +77,33 @@ def new_artists(df, start, end, min_plays=10):
     return firsts[firsts["plays"] >= min_plays].sort_values("ts")
 
 
-def build_summary(df, start, end, n=5):
+def build_summary(df, start, end):
     """Build the (small) summary we will send to Claude."""
     period = filter_dates(df, start, end)
-    artists = top_artists(period, n)
-    tracks = top_tracks(period, n)
+    total_hours = period["ms_played"].sum() / 3_600_000
+    artists = top_artists(period, TOP_ARTISTS)
+    tracks = top_tracks(period, TOP_TRACKS)
 
     # Top 3 artists per month → so Claude can see the phases
     by_month = {}
     for month, group in period.groupby(period["ts"].dt.strftime("%Y-%m")):
         by_month[month] = list(top_artists(group, 3).index)
 
-    # New artists, ignoring the warm-up period
+    # New artists, ignoring the warm-up period, keeping only the most played
     history_start = df["ts"].min()
     warmup_end = history_start + pd.Timedelta(days=WARMUP_DAYS)
     new = new_artists(df, start, end)
     new = new[new["ts"] >= warmup_end]
+    new = new.nlargest(MAX_NEW_ARTISTS, "plays").sort_values("ts")
 
     return {
         "period": {"start": start, "end": end},
         "history_start": history_start.strftime("%Y-%m-%d"),
         "total_plays": len(period),
-        "total_hours": round(period["ms_played"].sum() / 3_600_000, 1),
+        "total_hours": round(total_hours, 1),
         "top_artists": [
-            {"artist": artist, "hours": float(hours)}
+            {"artist": artist, "hours": float(hours),
+             "share_pct": round(hours / total_hours * 100, 1)}
             for artist, hours in artists.items()
         ],
         "top_tracks": [
@@ -109,7 +121,9 @@ def build_summary(df, start, end, n=5):
 if __name__ == "__main__":
     df = clean(load_history(DATA_FOLDER))
 
-    summary = build_summary(df, "2026-01-01", "2026-09-30")
+    summary = build_summary(df, "2017-01-01", "2026-12-31")
     text = json.dumps(summary, indent=2, ensure_ascii=False)
-    print(text)
+    print("Months:", len(summary["top_artists_by_month"]))
+    print("New artists:", len(summary["new_artists"]))
+    print("Top artists:", len(summary["top_artists"]))
     print("Summary characters:", len(text))

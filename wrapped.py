@@ -10,7 +10,18 @@ MODEL = "claude-haiku-5-5"
 PRICE_INPUT = 0.10    # dollars per million input tokens
 PRICE_OUTPUT = 0.50   # dollars per million output tokens
 LANGUAGE = "Spanish"  # language for the Wrapped text (the JSON keys stay in English)
-START, END = "2026-01-01", "2026-09-30"
+START, END = "2026-01-01", "2026-10-11"
+
+# Labels printed by our code, in each language
+LABELS = {
+    "Spanish": {"top": "Top 10 artistas (% de tu tiempo)", "phases": "Fases",
+                "personality": "Personalidad", "discoveries": "Descubrimientos",
+                "fun_fact": "Dato curioso"},
+    "English": {"top": "Top 10 artists (% of your time)", "phases": "Phases",
+                "personality": "Personality", "discoveries": "Discoveries",
+                "fun_fact": "Fun fact"},
+}
+L = LABELS[LANGUAGE]
 
 # The structure Claude must follow (same fields as models.py)
 JSON_FORMAT = """{
@@ -31,6 +42,7 @@ You receive a listening summary computed with pandas.
 
 What each summary field means:
 - history_start: the date the data begins. Don't claim anything about before it.
+- top_artists: hours and share_pct (% of total listening time in the period).
 - top_artists_by_month: top 3 artists per month. Use it to find musical phases.
 - new_artists: artists played for the first time in the period. The first {WARMUP_DAYS}
   days of history are already excluded, so these are real discoveries.
@@ -63,7 +75,7 @@ client = anthropic.Anthropic()
 try:
     response = client.messages.create(
         model=MODEL,
-        max_tokens=3000,
+        max_tokens=4000,
         system=SYSTEM_PROMPT,
         messages=[{
             "role": "user",
@@ -102,8 +114,24 @@ except ValidationError as error:
 
 # 6. Show the Wrapped
 print("🎧", wrapped.title)
-print("\nPhases:")
+
+# Numbers come from pandas (exact), not from Claude
+print(f"\n{L['top']}")
+for rank, item in enumerate(summary["top_artists"], start=1):
+    bar = "█" * round(item["share_pct"])
+    print(f"  {rank:>2}. {item['artist']:<22} {item['share_pct']:>5.1f}%  {bar}")
+
+print(f"\n{L['phases']}:")
 for phase in wrapped.phases:
     artists = ", ".join(phase.key_artists)
-    print(f"  - {phase.name} ({phase.start_month} to {phase.end_month}): {artists}")
-print("\nPersonality:", wrapped.music_personality.label)
+    print(f"  - {phase.name} ({phase.start_month} → {phase.end_month}): {artists}")
+    print(f"      {phase.description}")
+
+print(f"\n{L['personality']}: {wrapped.music_personality.label}")
+print(f"  {wrapped.music_personality.description}")
+
+print(f"\n{L['discoveries']}:")
+for discovery in wrapped.discoveries:
+    print(f"  - {discovery.artist}: {discovery.comment}")
+
+print(f"\n{L['fun_fact']}: {wrapped.fun_fact}")
