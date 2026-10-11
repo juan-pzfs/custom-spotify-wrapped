@@ -1,3 +1,4 @@
+import os
 import json
 from dotenv import load_dotenv
 import anthropic
@@ -43,22 +44,42 @@ Rules:
 """ + JSON_FORMAT
 
 # 1. Prepare the data (pandas)
-df = clean(load_history(DATA_FOLDER))
+try:
+    df = clean(load_history(DATA_FOLDER))
+except FileNotFoundError as error:
+    print(f"❌ {error}")
+    raise SystemExit(1)
 summary = build_summary(df, START, END)
 
 # 2. Call Claude
 load_dotenv()
+
+# Fail early if there's no API key at all
+if not os.getenv("ANTHROPIC_API_KEY"):
+    print("❌ No API key found. Create a .env file with ANTHROPIC_API_KEY=your-key")
+    raise SystemExit(1)
+
 client = anthropic.Anthropic()
-response = client.messages.create(
-    model=MODEL,
-    max_tokens=3000,
-    system=SYSTEM_PROMPT,
-    messages=[{
-        "role": "user",
-        "content": "Here is my listening summary. Write my Wrapped.\n\n"
-                   + json.dumps(summary, ensure_ascii=False),
-    }],
-)
+try:
+    response = client.messages.create(
+        model=MODEL,
+        max_tokens=3000,
+        system=SYSTEM_PROMPT,
+        messages=[{
+            "role": "user",
+            "content": "Here is my listening summary. Write my Wrapped.\n\n"
+                       + json.dumps(summary, ensure_ascii=False),
+        }],
+    )
+except anthropic.AuthenticationError:
+    print("❌ Invalid API key. Check ANTHROPIC_API_KEY in your .env (it may have expired).")
+    raise SystemExit(1)
+except anthropic.APIConnectionError:
+    print("❌ Couldn't reach the Claude API. Check your internet connection and try again.")
+    raise SystemExit(1)
+except anthropic.APIStatusError as error:
+    print(f"❌ The Claude API returned an error ({error.status_code}): {error.message}")
+    raise SystemExit(1)
 
 # 3. Get the text out of the response
 text = "".join(block.text for block in response.content if block.type == "text")

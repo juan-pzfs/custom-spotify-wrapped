@@ -3,8 +3,7 @@ from pathlib import Path
 import pandas as pd
 
 # 👇 To switch to your real data, change only this line
-DATA_FOLDER = Path("sample_data/Spotify Extended Streaming History")
-
+DATA_FOLDER = Path("sample_dta/Spotify Extended Streaming History")
 # First days of history that don't count as "discoveries" (nothing to compare against yet)
 WARMUP_DAYS = 90
 
@@ -13,6 +12,11 @@ def load_history(folder):
     """Read every history file in a folder and combine them into one table."""
     files = sorted(folder.glob("Streaming_History_Audio_*.json"))
     print(f"Reading: {folder} ({len(files)} files)")
+    if not files:
+        raise FileNotFoundError(
+            f"No Streaming_History_Audio_*.json files found in '{folder}'. "
+            "Check that DATA_FOLDER points to the right folder."
+        )
     tables = [pd.read_json(file) for file in files]
     return pd.concat(tables, ignore_index=True)
 
