@@ -1,5 +1,5 @@
 from pydantic import ValidationError
-from modelos import Wrapped
+from models import Wrapped
 
 # JSON roto a propósito:
 #   1. artistas_clave es texto, no lista
