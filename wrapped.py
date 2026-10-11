@@ -2,6 +2,8 @@ import json
 from dotenv import load_dotenv
 import anthropic
 from resumen import CARPETA, cargar_historial, limpiar, crear_resumen
+from pydantic import ValidationError
+from modelos import Wrapped
 
 MODELO = "claude-haiku-5-5"
 PRECIO_ENTRADA = 0.10   # dólares por millón de tokens
@@ -53,19 +55,29 @@ respuesta = cliente.messages.create(
     }],
 )
 
-# 3. Resultado y costo
+# 3. Sacar el texto de la respuesta
 texto = "".join(bloque.text for bloque in respuesta.content if bloque.type == "text")
-# Convertir el texto JSON en un diccionario de Python
-wrapped = json.loads(texto)
 
-print("🎧", wrapped["titulo"])
-print("\nFases:")
-for fase in wrapped["fases"]:
-    artistas = ", ".join(fase["artistas_clave"])
-    print(f"  - {fase['nombre']} ({fase['desde']} a {fase['hasta']}): {artistas}")
-print("\nPersonalidad:", wrapped["personalidad_musical"]["tipo"])
+# 4. Revisar si se cortó y cuánto costó (siempre, aunque falle la validación)
 if respuesta.stop_reason == "max_tokens":
     print("\n⚠️ La respuesta se cortó: se alcanzó max_tokens.")
 uso = respuesta.usage
 costo = (uso.input_tokens * PRECIO_ENTRADA + uso.output_tokens * PRECIO_SALIDA) / 1_000_000
-print(f"\nTokens: {uso.input_tokens} entrada / {uso.output_tokens} salida | Costo: ${costo:.6f}")
+print(f"Tokens: {uso.input_tokens} entrada / {uso.output_tokens} salida | Costo: ${costo:.6f}\n")
+
+# 5. Validar la respuesta contra el formulario
+try:
+    wrapped = Wrapped.model_validate_json(texto)
+except ValidationError as error:
+    print("❌ Claude respondió algo que no cumple el formulario:")
+    print(error)
+    print("\nRespuesta original de Claude:\n", texto)
+    raise SystemExit(1)
+
+# 6. Mostrar el Wrapped
+print("🎧", wrapped.titulo)
+print("\nFases:")
+for fase in wrapped.fases:
+    artistas = ", ".join(fase.artistas_clave)
+    print(f"  - {fase.nombre} ({fase.desde} a {fase.hasta}): {artistas}")
+print("\nPersonalidad:", wrapped.personalidad_musical.tipo)
