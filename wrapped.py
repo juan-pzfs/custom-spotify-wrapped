@@ -1,83 +1,88 @@
 import json
 from dotenv import load_dotenv
 import anthropic
-from resumen import CARPETA, cargar_historial, limpiar, crear_resumen
 from pydantic import ValidationError
-from modelos import Wrapped
+from summary import DATA_FOLDER, WARMUP_DAYS, load_history, clean, build_summary
+from models import Wrapped
 
-MODELO = "claude-haiku-5-5"
-PRECIO_ENTRADA = 0.10   # dólares por millón de tokens
-PRECIO_SALIDA = 0.50
+MODEL = "claude-haiku-5-5"
+PRICE_INPUT = 0.10    # dollars per million input tokens
+PRICE_OUTPUT = 0.50   # dollars per million output tokens
+LANGUAGE = "Spanish"  # language for the Wrapped text (the JSON keys stay in English)
+START, END = "2026-01-01", "2026-09-30"
 
-SYSTEM_PROMPT = """Eres un analista musical con estilo divertido, como el Spotify Wrapped.
-Recibes un resumen de escucha calculado con pandas.
-
-Qué significa cada campo del resumen:
-- historial_desde: fecha en que empiezan los datos. No afirmes nada sobre antes.
-- top_artistas_por_mes: top 3 de cada mes. Úsalo para encontrar fases musicales.
-- artistas_nuevos: artistas escuchados por primera vez en el periodo. Ya se excluyeron
-  los primeros 90 días del historial, así que sí son descubrimientos reales.
-
-Reglas:
-- Usa SOLO los datos del resumen. No inventes artistas, canciones ni números.
-- Responde en español.
-- Responde ÚNICAMENTE con un objeto JSON válido, sin texto antes ni después
-  y sin bloques de código (```). Usa exactamente esta estructura:
-
-{
-  "titulo": "frase corta y divertida",
-  "fases": [
-    {"nombre": "nombre creativo", "desde": "AAAA-MM", "hasta": "AAAA-MM",
-     "artistas_clave": ["artista"], "descripcion": "1-2 frases"}
+# The structure Claude must follow (same fields as models.py)
+JSON_FORMAT = """{
+  "title": "short, fun headline",
+  "phases": [
+    {"name": "creative name", "start_month": "YYYY-MM", "end_month": "YYYY-MM",
+     "key_artists": ["artist"], "description": "1-2 sentences"}
   ],
-  "descubrimientos": [
-    {"artista": "nombre", "comentario": "1 frase"}
+  "discoveries": [
+    {"artist": "name", "comment": "1 sentence"}
   ],
-  "personalidad_musical": {"tipo": "nombre creativo", "descripcion": "2-3 frases"},
-  "dato_curioso": "1 frase basada en los números del resumen"
+  "music_personality": {"label": "creative name", "description": "2-3 sentences"},
+  "fun_fact": "1 sentence based on the numbers in the summary"
 }"""
 
-# 1. Preparar los datos (pandas)
-df = limpiar(cargar_historial(CARPETA))
-resumen = crear_resumen(df, "2026-01-01", "2026-09-30")
+SYSTEM_PROMPT = f"""You are a music analyst with a fun style, like Spotify Wrapped.
+You receive a listening summary computed with pandas.
 
-# 2. Llamar a Claude
+What each summary field means:
+- history_start: the date the data begins. Don't claim anything about before it.
+- top_artists_by_month: top 3 artists per month. Use it to find musical phases.
+- new_artists: artists played for the first time in the period. The first {WARMUP_DAYS}
+  days of history are already excluded, so these are real discoveries.
+
+Rules:
+- Use ONLY the data in the summary. Don't invent artists, tracks or numbers.
+- Write all text values in {LANGUAGE}. Keep the JSON keys exactly as shown, in English.
+- Reply ONLY with a valid JSON object: no text before or after, no code fences (```).
+  Use exactly this structure:
+
+""" + JSON_FORMAT
+
+# 1. Prepare the data (pandas)
+df = clean(load_history(DATA_FOLDER))
+summary = build_summary(df, START, END)
+
+# 2. Call Claude
 load_dotenv()
-cliente = anthropic.Anthropic()
-respuesta = cliente.messages.create(
-    model=MODELO,
+client = anthropic.Anthropic()
+response = client.messages.create(
+    model=MODEL,
     max_tokens=3000,
     system=SYSTEM_PROMPT,
     messages=[{
         "role": "user",
-        "content": "Este es mi resumen de escucha. Escribe mi Wrapped.\n\n"
-                   + json.dumps(resumen, ensure_ascii=False),
+        "content": "Here is my listening summary. Write my Wrapped.\n\n"
+                   + json.dumps(summary, ensure_ascii=False),
     }],
 )
 
-# 3. Sacar el texto de la respuesta
-texto = "".join(bloque.text for bloque in respuesta.content if bloque.type == "text")
+# 3. Get the text out of the response
+text = "".join(block.text for block in response.content if block.type == "text")
 
-# 4. Revisar si se cortó y cuánto costó (siempre, aunque falle la validación)
-if respuesta.stop_reason == "max_tokens":
-    print("\n⚠️ La respuesta se cortó: se alcanzó max_tokens.")
-uso = respuesta.usage
-costo = (uso.input_tokens * PRECIO_ENTRADA + uso.output_tokens * PRECIO_SALIDA) / 1_000_000
-print(f"Tokens: {uso.input_tokens} entrada / {uso.output_tokens} salida | Costo: ${costo:.6f}\n")
+# 4. Check for truncation and cost (always, even if validation fails)
+if response.stop_reason == "max_tokens":
+    print("\n⚠️ The response was cut off: max_tokens reached.")
+usage = response.usage
+cost = (usage.input_tokens * PRICE_INPUT + usage.output_tokens * PRICE_OUTPUT) / 1_000_000
+print(f"Tokens: {usage.input_tokens} input / {usage.output_tokens} output | Cost: ${cost:.6f}\n")
 
-# 5. Validar la respuesta contra el formulario
+# 5. Validate the response against the form
 try:
-    wrapped = Wrapped.model_validate_json(texto)
+    wrapped = Wrapped.model_validate_json(text)
 except ValidationError as error:
-    print("❌ Claude respondió algo que no cumple el formulario:")
+    print("❌ Claude's response does not match the form:")
     print(error)
-    print("\nRespuesta original de Claude:\n", texto)
+    print("\nClaude's raw response:\n", text)
     raise SystemExit(1)
 
-# 6. Mostrar el Wrapped
-print("🎧", wrapped.titulo)
-print("\nFases:")
-for fase in wrapped.fases:
-    artistas = ", ".join(fase.artistas_clave)
-    print(f"  - {fase.nombre} ({fase.desde} a {fase.hasta}): {artistas}")
-print("\nPersonalidad:", wrapped.personalidad_musical.tipo)
+# 6. Show the Wrapped
+print("🎧", wrapped.title)
+print("\nPhases:")
+for phase in wrapped.phases:
+    artists = ", ".join(phase.key_artists)
+    print(f"  - {phase.name} ({phase.start_month} to {phase.end_month}): {artists}")
+print("\nPersonality:", wrapped.music_personality.label)

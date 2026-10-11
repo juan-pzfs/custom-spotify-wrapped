@@ -1,104 +1,112 @@
+import json
 from pathlib import Path
 import pandas as pd
-import json
 
-# 👇 Para cambiar a datos reales, solo cambia esta línea
-CARPETA = Path("sample_data/Spotify Extended Streaming History")
+# 👇 To switch to your real data, change only this line
+DATA_FOLDER = Path("sample_data/Spotify Extended Streaming History")
+
+# First days of history that don't count as "discoveries" (nothing to compare against yet)
+WARMUP_DAYS = 90
 
 
-def cargar_historial(carpeta):
-    """Lee todos los archivos de historial de una carpeta y los junta en una tabla."""
-    archivos = sorted(carpeta.glob("Streaming_History_Audio_*.json"))
-    print(f"Leyendo: {carpeta} ({len(archivos)} archivos)")
-    tablas = [pd.read_json(archivo) for archivo in archivos]
-    return pd.concat(tablas, ignore_index=True)
+def load_history(folder):
+    """Read every history file in a folder and combine them into one table."""
+    files = sorted(folder.glob("Streaming_History_Audio_*.json"))
+    print(f"Reading: {folder} ({len(files)} files)")
+    tables = [pd.read_json(file) for file in files]
+    return pd.concat(tables, ignore_index=True)
 
-def limpiar(df):
-    """Deja solo música escuchada de verdad, con las columnas que necesitamos."""
-    df = df[df["master_metadata_track_name"].notna()]   # quitar podcasts y audiolibros
-    df = df[df["ms_played"] >= 30_000]                    # 30+ segundos = cuenta como "stream"
+
+def clean(df):
+    """Keep only music you actually listened to, with the columns we need."""
+    df = df[df["master_metadata_track_name"].notna()]   # drop podcasts and audiobooks
+    df = df[df["ms_played"] >= 30_000]                    # 30+ seconds counts as a "stream"
     df = df.rename(columns={
-        "master_metadata_track_name": "cancion",
-        "master_metadata_album_artist_name": "artista",
+        "master_metadata_track_name": "track",
+        "master_metadata_album_artist_name": "artist",
     })
-    df = df[["ts", "ms_played", "cancion", "artista"]].copy()
+    df = df[["ts", "ms_played", "track", "artist"]].copy()
     df["ts"] = pd.to_datetime(df["ts"])
     return df
 
-def filtrar_fechas(df, inicio, fin):
-    """Deja solo las reproducciones entre dos fechas (ambas incluidas)."""
-    inicio = pd.Timestamp(inicio, tz="UTC")
-    fin = pd.Timestamp(fin, tz="UTC") + pd.Timedelta(days=1)
-    return df[(df["ts"] >= inicio) & (df["ts"] < fin)]
 
-def top_artistas(df, n=5):
-    """Los n artistas con más horas escuchadas."""
-    horas = df.groupby("artista")["ms_played"].sum() / 3_600_000
-    return horas.sort_values(ascending=False).head(n).round(1)
+def filter_dates(df, start, end):
+    """Keep only plays between two dates (both included)."""
+    start = pd.Timestamp(start, tz="UTC")
+    end = pd.Timestamp(end, tz="UTC") + pd.Timedelta(days=1)
+    return df[(df["ts"] >= start) & (df["ts"] < end)]
 
 
-def top_canciones(df, n=5):
-    """Las n canciones más reproducidas. Artista + canción = llave única."""
-    conteo = df.groupby(["artista", "cancion"]).size()
-    return conteo.sort_values(ascending=False).head(n)
+def top_artists(df, n=5):
+    """The n artists with the most hours listened."""
+    hours = df.groupby("artist")["ms_played"].sum() / 3_600_000
+    return hours.sort_values(ascending=False).head(n).round(1)
 
-def artistas_nuevos(df, inicio, fin, minimo=10):
-    """Artistas que escuchaste por PRIMERA VEZ en el periodo y que se quedaron (>= minimo)."""
-    # 1. La primera vez que escuchaste a cada artista, en TODO el historial
-    primeras = df.groupby("artista")["ts"].min().reset_index()
 
-    # 2. ¿Cuáles de esas primeras veces cayeron dentro del periodo?
-    primeras = filtrar_fechas(primeras, inicio, fin)
+def top_tracks(df, n=5):
+    """The n most-played tracks. Artist + track = unique key."""
+    counts = df.groupby(["artist", "track"]).size()
+    return counts.sort_values(ascending=False).head(n)
 
-    # 3. Cuántas veces escuchaste a cada uno durante el periodo
-    conteo = filtrar_fechas(df, inicio, fin)["artista"].value_counts()
-    primeras["reproducciones"] = primeras["artista"].map(conteo)
 
-    # 4. Solo los que de verdad entraron a tu rotación
-    return primeras[primeras["reproducciones"] >= minimo].sort_values("ts")
+def new_artists(df, start, end, min_plays=10):
+    """Artists you heard for the FIRST time in the period and who stuck around (>= min_plays)."""
+    # 1. The first time you played each artist, across your WHOLE history
+    firsts = df.groupby("artist")["ts"].min().reset_index()
 
-def crear_resumen(df, inicio, fin, n=5):
-    """Arma el resumen (pequeño) que le mandaremos a Claude."""
-    periodo = filtrar_fechas(df, inicio, fin)
-    artistas = top_artistas(periodo, n)
-    canciones = top_canciones(periodo, n)
+    # 2. Which of those first plays fall inside the period?
+    firsts = filter_dates(firsts, start, end)
 
-    # Top 3 artistas de cada mes → para que Claude vea las fases
-    por_mes = {}
-    for mes, grupo in periodo.groupby(periodo["ts"].dt.strftime("%Y-%m")):
-        por_mes[mes] = list(top_artistas(grupo, 3).index)
+    # 3. How many times you played each one during the period
+    counts = filter_dates(df, start, end)["artist"].value_counts()
+    firsts["plays"] = firsts["artist"].map(counts)
 
-    # Artistas nuevos, ignorando el periodo de calentamiento
-    historial_desde = df["ts"].min()
-    calentamiento = historial_desde + pd.Timedelta(days=90)
-    nuevos = artistas_nuevos(df, inicio, fin)
-    nuevos = nuevos[nuevos["ts"] >= calentamiento]
+    # 4. Only the ones that really entered your rotation
+    return firsts[firsts["plays"] >= min_plays].sort_values("ts")
+
+
+def build_summary(df, start, end, n=5):
+    """Build the (small) summary we will send to Claude."""
+    period = filter_dates(df, start, end)
+    artists = top_artists(period, n)
+    tracks = top_tracks(period, n)
+
+    # Top 3 artists per month → so Claude can see the phases
+    by_month = {}
+    for month, group in period.groupby(period["ts"].dt.strftime("%Y-%m")):
+        by_month[month] = list(top_artists(group, 3).index)
+
+    # New artists, ignoring the warm-up period
+    history_start = df["ts"].min()
+    warmup_end = history_start + pd.Timedelta(days=WARMUP_DAYS)
+    new = new_artists(df, start, end)
+    new = new[new["ts"] >= warmup_end]
 
     return {
-        "periodo": {"inicio": inicio, "fin": fin},
-        "historial_desde": historial_desde.strftime("%Y-%m-%d"),
-        "total_reproducciones": len(periodo),
-        "horas_totales": round(periodo["ms_played"].sum() / 3_600_000, 1),
-        "top_artistas": [
-            {"artista": artista, "horas": float(horas)}
-            for artista, horas in artistas.items()
+        "period": {"start": start, "end": end},
+        "history_start": history_start.strftime("%Y-%m-%d"),
+        "total_plays": len(period),
+        "total_hours": round(period["ms_played"].sum() / 3_600_000, 1),
+        "top_artists": [
+            {"artist": artist, "hours": float(hours)}
+            for artist, hours in artists.items()
         ],
-        "top_canciones": [
-            {"artista": artista, "cancion": cancion, "reproducciones": int(veces)}
-            for (artista, cancion), veces in canciones.items()
+        "top_tracks": [
+            {"artist": artist, "track": track, "plays": int(plays)}
+            for (artist, track), plays in tracks.items()
         ],
-        "top_artistas_por_mes": por_mes,
-        "artistas_nuevos": [
-            {"artista": artista, "primera_vez": fecha.strftime("%Y-%m-%d"),
-             "reproducciones": int(veces)}
-            for artista, fecha, veces in zip(nuevos["artista"], nuevos["ts"], nuevos["reproducciones"])
+        "top_artists_by_month": by_month,
+        "new_artists": [
+            {"artist": artist, "first_played": date.strftime("%Y-%m-%d"), "plays": int(plays)}
+            for artist, date, plays in zip(new["artist"], new["ts"], new["plays"])
         ],
     }
 
-if __name__ == "__main__":
-    df = limpiar(cargar_historial(CARPETA))
 
-    resumen = crear_resumen(df, "2026-01-01", "2026-09-30")
-    texto = json.dumps(resumen, indent=2, ensure_ascii=False)
-    print(texto)
-    print("Caracteres del resumen:", len(texto))
+if __name__ == "__main__":
+    df = clean(load_history(DATA_FOLDER))
+
+    summary = build_summary(df, "2026-01-01", "2026-09-30")
+    text = json.dumps(summary, indent=2, ensure_ascii=False)
+    print(text)
+    print("Summary characters:", len(text))

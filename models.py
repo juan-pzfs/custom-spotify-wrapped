@@ -1,27 +1,27 @@
 from pydantic import BaseModel
 
 
-class Fase(BaseModel):
-    nombre: str
-    desde: str
-    hasta: str
-    artistas_clave: list[str]
-    descripcion: str
+class Phase(BaseModel):
+    name: str
+    start_month: str
+    end_month: str
+    key_artists: list[str]
+    description: str
 
 
-class Descubrimiento(BaseModel):
-    artista: str
-    comentario: str
+class Discovery(BaseModel):
+    artist: str
+    comment: str
 
 
-class Personalidad(BaseModel):
-    tipo: str
-    descripcion: str
+class Personality(BaseModel):
+    label: str
+    description: str
 
 
 class Wrapped(BaseModel):
-    titulo: str
-    fases: list[Fase]
-    descubrimientos: list[Descubrimiento]
-    personalidad_musical: Personalidad
-    dato_curioso: str
+    title: str
+    phases: list[Phase]
+    discoveries: list[Discovery]
+    music_personality: Personality
+    fun_fact: str

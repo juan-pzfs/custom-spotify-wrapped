@@ -1,14 +1,14 @@
 import pandas as pd
 
-ruta = "sample_data/Spotify Extended Streaming History/Streaming_History_Audio_2026.json"
-df = pd.read_json(ruta)
+path = "sample_data/Spotify Extended Streaming History/Streaming_History_Audio_2026.json"
+df = pd.read_json(path)
 
-print("Filas y columnas:", df.shape)
+print("Rows and columns:", df.shape)
 
-# Convertir ts de texto a fecha real, y sacar el mes
+# Convert ts from text to a real date, and extract the month
 df["ts"] = pd.to_datetime(df["ts"])
-df["mes"] = df["ts"].dt.month
+df["month"] = df["ts"].dt.month
 
-# Tabla: cuántas reproducciones por mes y artista
-tabla = pd.crosstab(df["mes"], df["master_metadata_album_artist_name"])
-print(tabla.to_string())
+# Table: plays per month and artist
+table = pd.crosstab(df["month"], df["master_metadata_album_artist_name"])
+print(table.to_string())
