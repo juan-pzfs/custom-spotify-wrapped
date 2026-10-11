@@ -63,9 +63,20 @@ def crear_resumen(df, inicio, fin, n=5):
     artistas = top_artistas(periodo, n)
     canciones = top_canciones(periodo, n)
 
+    # Top 3 artistas de cada mes → para que Claude vea las fases
+    por_mes = {}
+    for mes, grupo in periodo.groupby(periodo["ts"].dt.strftime("%Y-%m")):
+        por_mes[mes] = list(top_artistas(grupo, 3).index)
+
+    # Artistas nuevos, ignorando el periodo de calentamiento
+    historial_desde = df["ts"].min()
+    calentamiento = historial_desde + pd.Timedelta(days=90)
+    nuevos = artistas_nuevos(df, inicio, fin)
+    nuevos = nuevos[nuevos["ts"] >= calentamiento]
+
     return {
         "periodo": {"inicio": inicio, "fin": fin},
-        "historial_desde": df["ts"].min().strftime("%Y-%m-%d"),
+        "historial_desde": historial_desde.strftime("%Y-%m-%d"),
         "total_reproducciones": len(periodo),
         "horas_totales": round(periodo["ms_played"].sum() / 3_600_000, 1),
         "top_artistas": [
@@ -75,6 +86,12 @@ def crear_resumen(df, inicio, fin, n=5):
         "top_canciones": [
             {"artista": artista, "cancion": cancion, "reproducciones": int(veces)}
             for (artista, cancion), veces in canciones.items()
+        ],
+        "top_artistas_por_mes": por_mes,
+        "artistas_nuevos": [
+            {"artista": artista, "primera_vez": fecha.strftime("%Y-%m-%d"),
+             "reproducciones": int(veces)}
+            for artista, fecha, veces in zip(nuevos["artista"], nuevos["ts"], nuevos["reproducciones"])
         ],
     }
 
